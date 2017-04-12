@@ -31,6 +31,10 @@ public class CouchbaseQueryExecutor {
     public static final String TO_FILTER = "_to";
     public static final String NOT_FILTER = "_not";
     public static final String IN_FILTER = "_in";
+    public static final String NULL_FILTER = "_null";
+    public static final String NOT_NULL_FILTER = "_notnull";
+    public static final String MISSING_FILTER = "_missing";
+    public static final String NULL_OR_MISSING_FILTER = "_nullormissing";
     private static final String IGNORE_CASE_ORDER = "_ignorecase";
 
     @Inject
@@ -38,6 +42,30 @@ public class CouchbaseQueryExecutor {
 
     @Inject
     private ObjectMapper objectMapper;
+
+    /**
+     * Replace full stops with underscores in keys
+     * to allow for nested keys in clauses
+     *
+     * @param key
+     * @return
+     */
+    private String getPropertyKey(String key) {
+        return key.replaceAll("\\.", "_");
+    }
+
+    /**
+     * Call getPropertyKey() on all param keys
+     *
+     * @param params
+     * @return
+     */
+    private JsonObject paramateriseParams(JsonObject params) {
+        JsonObject newParams = JsonObject.create();
+        params.getNames()
+            .forEach(n -> newParams.put(getPropertyKey(n), params.get(n)));
+        return newParams;
+    }
 
     private CouchbaseTemplate createTemplate() {
         try {
@@ -57,7 +85,7 @@ public class CouchbaseQueryExecutor {
         CouchbaseTemplate template = createTemplate();
 
         Statement query = createQueryStatement(params, pageable);
-        N1qlQuery queryWithParameter = N1qlQuery.parameterized(query, params);
+        N1qlQuery queryWithParameter = N1qlQuery.parameterized(query, paramateriseParams(params));
 
         page.data = convertToDataList(template.findByN1QLProjection(queryWithParameter, LinkedHashMap.class), clazz);
         page.totalElements = count(params);
@@ -70,7 +98,7 @@ public class CouchbaseQueryExecutor {
         CouchbaseTemplate template = createTemplate();
 
         Statement query = createQueryStatement(params);
-        N1qlQuery queryWithParameter = N1qlQuery.parameterized(query, params);
+        N1qlQuery queryWithParameter = N1qlQuery.parameterized(query, paramateriseParams(params));
 
         return convertToDataList(template.findByN1QLProjection(queryWithParameter, LinkedHashMap.class), clazz);
     }
@@ -80,7 +108,7 @@ public class CouchbaseQueryExecutor {
             .map(hashMap -> {
                 LinkedHashMap data = (LinkedHashMap) hashMap.get("data");
                 data.put("_id", hashMap.get("id"));
-                data.put("_rev", ((LinkedHashMap) data.get("_sync")).get("rev"));
+                data.put("_rev", data.get("_sync") != null ? ((LinkedHashMap) data.get("_sync")).get("rev") : null);
                 return objectMapper.convertValue(data, clazz);
             })
             .collect(Collectors.toList());
@@ -90,7 +118,7 @@ public class CouchbaseQueryExecutor {
         CouchbaseTemplate template = createTemplate();
 
         Statement query = createCountStatement(params);
-        N1qlQuery queryWithParams = N1qlQuery.parameterized(query, params);
+        N1qlQuery queryWithParams = N1qlQuery.parameterized(query, paramateriseParams(params));
         LinkedHashMap countMap = ((LinkedHashMap) template.findByN1QLProjection(queryWithParams, Object.class).get(0));
 
         return ((Integer) countMap.get("count"));
@@ -101,7 +129,7 @@ public class CouchbaseQueryExecutor {
         CouchbaseTemplate template = createTemplate();
 
         Statement query = createSumStatement(params, field);
-        N1qlQuery queryWithParams = N1qlQuery.parameterized(query, params);
+        N1qlQuery queryWithParams = N1qlQuery.parameterized(query, paramateriseParams(params));
         LinkedHashMap sumMap = ((LinkedHashMap) template.findByN1QLProjection(queryWithParams, Object.class).get(0));
 
         return ((Integer) sumMap.get("sum"));
@@ -139,11 +167,11 @@ public class CouchbaseQueryExecutor {
     }
 
     private FromPath count(Expression bucketName) {
-        return select("count(*) as count, meta(" + bucketName + ").id AS id ");
+        return select("count(*) as count ");
     }
 
     private FromPath sum(Expression bucketName, String field) {
-        return select("sum(" + field + ") as sum, meta(" + bucketName + ").id AS id ");
+        return select("sum(" + field + ") as sum ");
     }
 
     private FromPath selectWithMeta(Expression bucketName) {
@@ -167,6 +195,7 @@ public class CouchbaseQueryExecutor {
 
     private Expression createExpression(String key) {
         String propertyKey = key;
+        key = getPropertyKey(key);
 
         if(key.endsWith(CONTAINS_FILTER)) {
             propertyKey = key.substring(0, key.length() - CONTAINS_FILTER.length());
@@ -183,6 +212,18 @@ public class CouchbaseQueryExecutor {
         } else if(key.endsWith(IN_FILTER)) {
             propertyKey = key.substring(0, key.length() - IN_FILTER.length());
             return createInExpression(propertyKey, key);
+        } else if(key.endsWith(NULL_FILTER)) {
+            propertyKey = key.substring(0, key.length() - NULL_FILTER.length());
+            return createNullExpression(propertyKey, key);
+        } else if(key.endsWith(NOT_NULL_FILTER)) {
+            propertyKey = key.substring(0, key.length() - NOT_NULL_FILTER.length());
+            return createNotNullExpression(propertyKey, key);
+        } else if(key.endsWith(MISSING_FILTER)) {
+            propertyKey = key.substring(0, key.length() - MISSING_FILTER.length());
+            return createMissingExpression(propertyKey, key);
+        } else if(key.endsWith(NULL_OR_MISSING_FILTER)) {
+            propertyKey = key.substring(0, key.length() - NULL_OR_MISSING_FILTER.length());
+            return createNullOrMissingExpression(propertyKey, key);
         } else {
             return createEqualsExpression(propertyKey, key);
         }
@@ -210,6 +251,22 @@ public class CouchbaseQueryExecutor {
 
     private Expression createContainsExpression(String propertyKey, String key) {
         return x("CONTAINS(LOWER(" + propertyKey + "), LOWER($" + key + "))");
+    }
+
+    private Expression createNullExpression(String propertyKey, String key) {
+        return x(propertyKey + " IS NULL");
+    }
+
+    private Expression createNotNullExpression(String propertyKey, String key) {
+        return x(propertyKey + " IS NOT NULL");
+    }
+
+    private Expression createMissingExpression(String propertyKey, String key) {
+        return x(propertyKey + " IS MISSING");
+    }
+
+    private Expression createNullOrMissingExpression(String propertyKey, String key) {
+        return x(propertyKey + " IS NULL OR " + propertyKey + " IS MISSING");
     }
 
     private String lowerCase(String input) {
