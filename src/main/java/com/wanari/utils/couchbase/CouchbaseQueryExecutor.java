@@ -139,14 +139,16 @@ public class CouchbaseQueryExecutor {
         Expression bucketName = i(couchbaseConfiguration.getBucketName());
         return count(bucketName)
             .from(bucketName)
-            .where(composeWhere(bucketName, params));
+            .where(composeWhere(bucketName, params))
+            .groupBy(composeGroupBy(bucketName, params));
     }
 
     private Statement createSumStatement(JsonObject params, String field) {
         Expression bucketName = i(couchbaseConfiguration.getBucketName());
         return sum(bucketName, field)
             .from(bucketName)
-            .where(composeWhere(bucketName, params));
+            .where(composeWhere(bucketName, params))
+            .groupBy(composeGroupBy(bucketName, params));
     }
 
     private Statement createQueryStatement(JsonObject params, Pageable pageable) {
@@ -167,30 +169,33 @@ public class CouchbaseQueryExecutor {
     }
 
     private FromPath count(Expression bucketName) {
-        return select("count(*) as count ");
+        return select("count(*) as count, meta(" + bucketName + ").id AS id ");
     }
 
     private FromPath sum(Expression bucketName, String field) {
-        return select("sum(" + field + ") as sum ");
+        return select("sum(" + field + ") as sum, meta(" + bucketName + ").id AS id ");
     }
 
     private FromPath selectWithMeta(Expression bucketName) {
         return select(bucketName + " as data, meta(" + bucketName + ").id AS id ");
     }
 
-
     private Expression composeWhere(Expression bucketName, JsonObject params) {
         List<Expression> expressions = params.getNames()
-            .stream()
-            .map(this::createExpression)
-            .collect(Collectors.toList());
+                .stream()
+                .map(this::createExpression)
+                .collect(Collectors.toList());
 
         expressions.add(x("meta(" + bucketName + ").id NOT LIKE \"_sync:%\""));
 
         return expressions
-            .stream()
-            .reduce(Expression::and)
-            .get();
+                .stream()
+                .reduce(Expression::and)
+                .get();
+    }
+
+    private Expression composeGroupBy(Expression bucketName, JsonObject params) {
+        return x("meta(" + bucketName + ").id");
     }
 
     private Expression createExpression(String key) {
