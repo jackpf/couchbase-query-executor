@@ -6,6 +6,7 @@ import com.couchbase.client.java.query.Statement;
 import com.couchbase.client.java.query.dsl.Expression;
 import com.couchbase.client.java.query.dsl.Sort;
 import com.couchbase.client.java.query.dsl.path.FromPath;
+import com.couchbase.client.java.repository.annotation.Id;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wanari.utils.couchbase.exceptions.NonUniqueResultException;
 import org.springframework.data.couchbase.core.CouchbaseTemplate;
@@ -13,10 +14,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 
 import javax.inject.Inject;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import static com.couchbase.client.java.query.Select.select;
@@ -36,6 +36,8 @@ public class CouchbaseQueryExecutor {
     public static final String MISSING_FILTER = "_missing";
     public static final String NULL_OR_MISSING_FILTER = "_nullormissing";
     private static final String IGNORE_CASE_ORDER = "_ignorecase";
+
+    Logger log = Logger.getLogger(CouchbaseQueryExecutor.class.getName());
 
     @Inject
     private CouchbaseQueryExecutorConfiguration couchbaseConfiguration;
@@ -109,7 +111,21 @@ public class CouchbaseQueryExecutor {
                 LinkedHashMap data = (LinkedHashMap) hashMap.get("data");
                 data.put("_id", hashMap.get("id"));
                 data.put("_rev", data.get("_sync") != null ? ((LinkedHashMap) data.get("_sync")).get("rev") : null);
-                return objectMapper.convertValue(data, clazz);
+                T obj = objectMapper.convertValue(data, clazz);
+                // Bit of a hack to insert the ID into the object's ID field
+                Arrays.stream(clazz.getDeclaredFields()).forEach(
+                    f -> {
+                        if (f.getAnnotation(Id.class) != null) {
+                            try {
+                                f.setAccessible(true);
+                                f.set(obj, hashMap.get("id"));
+                            } catch (IllegalAccessException e) {
+                                log.log(Level.WARNING, "Error setting ID field on document", e);
+                            }
+                        }
+                    }
+                );
+                return obj;
             })
             .collect(Collectors.toList());
     }
@@ -185,7 +201,8 @@ public class CouchbaseQueryExecutor {
             .map(this::createExpression)
             .collect(Collectors.toList());
 
-        expressions.add(x("meta(" + bucketName + ").id NOT LIKE \"_sync:%\""));
+        //expressions.add(x("meta(" + bucketName + ").id NOT LIKE \"_sync:%\""));
+        expressions.add(x("1=1"));
 
         return expressions
             .stream()
