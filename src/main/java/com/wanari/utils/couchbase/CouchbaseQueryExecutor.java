@@ -10,6 +10,8 @@ import com.couchbase.client.java.repository.annotation.Id;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wanari.utils.couchbase.exceptions.NonUniqueResultException;
 import org.springframework.data.couchbase.core.CouchbaseTemplate;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 
@@ -53,7 +55,7 @@ public class CouchbaseQueryExecutor {
      * @return
      */
     private String getPropertyKey(String key) {
-        return key.replaceAll("\\.", "_");
+        return key.replaceAll("[^a-zA-Z\\d\\s:]", "_");
     }
 
     /**
@@ -82,18 +84,14 @@ public class CouchbaseQueryExecutor {
         return asOptional(documents, params);
     }
 
-    public <T> CouchbasePage<T> find(JsonObject params, Pageable pageable, Class<T> clazz) {
-        CouchbasePage<T> page = new CouchbasePage<>(pageable);
+    public <T> Page<T> find(JsonObject params, Pageable pageable, Class<T> clazz) {
         CouchbaseTemplate template = createTemplate();
 
         Statement query = createQueryStatement(params, pageable);
         N1qlQuery queryWithParameter = N1qlQuery.parameterized(query, paramateriseParams(params));
+        List<T> data = convertToDataList(template.findByN1QLProjection(queryWithParameter, LinkedHashMap.class), clazz);
 
-        page.data = convertToDataList(template.findByN1QLProjection(queryWithParameter, LinkedHashMap.class), clazz);
-        page.totalElements = count(params);
-        page.calculateTotalPages();
-
-        return page;
+        return new PageImpl<T>(data, pageable, count(params));
     }
 
     public <T> List<T> find(JsonObject params, Class<T> clazz) {
@@ -215,31 +213,31 @@ public class CouchbaseQueryExecutor {
         key = getPropertyKey(key);
 
         if(key.endsWith(CONTAINS_FILTER)) {
-            propertyKey = key.substring(0, key.length() - CONTAINS_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - CONTAINS_FILTER.length());
             return createContainsExpression(propertyKey, key);
         } else if(key.endsWith(FROM_FILTER)) {
-            propertyKey = key.substring(0, key.length() - FROM_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - FROM_FILTER.length());
             return createGreaterThanOrEqualsExpression(propertyKey, key);
         } else if(key.endsWith(TO_FILTER)) {
-            propertyKey = key.substring(0, key.length() - TO_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - TO_FILTER.length());
             return createLessThanOrEqualsExpression(propertyKey, key);
         } else if(key.endsWith(NOT_FILTER)) {
-            propertyKey = key.substring(0, key.length() - NOT_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - NOT_FILTER.length());
             return createNotEqualsExpression(propertyKey, key);
         } else if(key.endsWith(IN_FILTER)) {
-            propertyKey = key.substring(0, key.length() - IN_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - IN_FILTER.length());
             return createInExpression(propertyKey, key);
         } else if(key.endsWith(NULL_FILTER)) {
-            propertyKey = key.substring(0, key.length() - NULL_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - NULL_FILTER.length());
             return createNullExpression(propertyKey, key);
         } else if(key.endsWith(NOT_NULL_FILTER)) {
-            propertyKey = key.substring(0, key.length() - NOT_NULL_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - NOT_NULL_FILTER.length());
             return createNotNullExpression(propertyKey, key);
         } else if(key.endsWith(MISSING_FILTER)) {
-            propertyKey = key.substring(0, key.length() - MISSING_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - MISSING_FILTER.length());
             return createMissingExpression(propertyKey, key);
         } else if(key.endsWith(NULL_OR_MISSING_FILTER)) {
-            propertyKey = key.substring(0, key.length() - NULL_OR_MISSING_FILTER.length());
+            propertyKey = propertyKey.substring(0, propertyKey.length() - NULL_OR_MISSING_FILTER.length());
             return createNullOrMissingExpression(propertyKey, key);
         } else {
             return createEqualsExpression(propertyKey, key);
